@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Selector name="Priority Selector">
+
+    <Sequence name="Mid-air">
+        <Condition name="isAirborne"/>
+        <Action name="AStar"/>
+    </Sequence>
+
+    <Sequence name="Gap Avoidance">
+        <Condition name="isGapAhead"/>
+        <Action name="Astar"/>
+    </Sequence>
+
+    <Sequence name="Immediate Danger">
+        <Condition name="isImmediateThreat"/>
+        <Action name="AvoidEnemy"/>
+    </Sequence>
+
+    <Sequence name="Combat">
+        <Condition name="isEnemyNearby"/>
+        <Condition name="isEnemyReachable"/>
+        <Condition name="isStompableEnemy"/>
+        <Action name="AttackEnemy"/>
+    </Sequence>
+
+    <Sequence name="Coin Collection">
+        <Condition name="isCoinNearby"/>
+        <Action name="CollectCoin"/>
+    </Sequence>
+
+    <Action name="AStar"/>
+
+</Selector>
