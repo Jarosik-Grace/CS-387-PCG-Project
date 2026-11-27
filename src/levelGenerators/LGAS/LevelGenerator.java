@@ -2,6 +2,7 @@ package levelGenerators.LGAS;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -11,6 +12,7 @@ import java.util.function.UnaryOperator;
 import engine.core.MarioLevelGenerator;
 import engine.core.MarioLevelModel;
 import engine.core.MarioTimer;
+import levelGenerators.LGAS.MarkovModel;
 
 public class LevelGenerator implements MarioLevelGenerator {
     public static final int LEVEL_HEIGHT = 16;
@@ -21,35 +23,50 @@ public class LevelGenerator implements MarioLevelGenerator {
     public static final String FLAT = "--------------XX";
     private static final int FLAT_SURFACE = LEVEL_HEIGHT - 2;
     private static final String SOLID = "X#tT[]<>D";
-    private final Map<String, List<String>> nGrams;
+    private final MarkovModel markovModel;
+    private final MarkovModel bigramModel;
     private final int n;
     private final long seed;
     private final boolean fixedSeed;
     private int levelsMade = 0;
-    private final Map<String, List<String>> bigrams = new HashMap<>();
     private final Map<Integer, List<String>> bySurface = new HashMap<>();
     private UnaryOperator<String> postProcessor = UnaryOperator.identity();
     private int lastBackoffs = 0;
     private int lastFlatFallbacks = 0;
 
     public LevelGenerator() {
-        this(buildTable(DEFAULT_CORPUS, 3), 3, System.nanoTime(), false);
+        this(3, System.nanoTime(), false);
     }
 
     public LevelGenerator(long seed) {
-        this(buildTable(DEFAULT_CORPUS, 3), 3, seed, true);
+        this(3, seed, true);
     }
 
-    public LevelGenerator(Map<String, List<String>> nGrams, int n, long seed) {
-        this(nGrams, n, seed, true);
+    public LevelGenerator(MarkovModel markovModel, MarkovModel bigramModel, int n, long seed) {
+        this(markovModel, bigramModel, n, seed, true);
     }
 
-    private LevelGenerator(Map<String, List<String>> nGrams, int n, long seed, boolean fixedSeed) {
-        this.nGrams = nGrams;
+    private LevelGenerator(int n, long seed, boolean fixedSeed) {
+        this(createAndTrainModel(n), createAndTrainModel(1), n, seed, fixedSeed);
+    }
+
+    private LevelGenerator(MarkovModel markovModel, MarkovModel bigramModel, int n, long seed, boolean fixedSeed) {
+        this.markovModel = markovModel;
+        this.bigramModel = bigramModel;
         this.n = n;
         this.seed = seed;
         this.fixedSeed = fixedSeed;
-        buildBackoffTables();
+        buildTable();
+    }
+
+    private static MarkovModel createAndTrainModel(int order) {
+        MarkovModel model = new MarkovModel(order);
+        try {
+            model.trainFromDirectory(Paths.get(DEFAULT_CORPUS));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to train MarkovModel of order " + order, e);
+        }
+        return model;
     }
 
     public void setPostProcessor(UnaryOperator<String> postProcessor) {
@@ -104,16 +121,16 @@ public class LevelGenerator implements MarioLevelGenerator {
     private String nextColumn(List<String> cols, Random rnd, boolean landing) {
         String last = cols.get(cols.size() - 1);
 
-        StringBuilder key = new StringBuilder();
-        for (int i = cols.size() - n; i < cols.size(); i++) key.append(cols.get(i));
-
-        List<String> options = nGrams.get(key.toString());
+        List<String> options = new ArrayList<>(markovModel.getCandidates(cols));
         if (options == null || options.isEmpty()) {
             lastBackoffs++;
-            options = bigrams.get(last);
+            options = new ArrayList<>(bigramModel.getCandidates(cols));
         }
         if (options == null || options.isEmpty()) {
-            options = bySurface.get(surface(last));
+            List<String> surfaceOptions = bySurface.get(surface(last));
+            if (surfaceOptions != null) {
+                options = bySurface.get(surface(last));
+            }
         }
         if (options == null || options.isEmpty()) {
             lastFlatFallbacks++;
@@ -125,11 +142,7 @@ public class LevelGenerator implements MarioLevelGenerator {
             for (String o : options) if (surface(o) == FLAT_SURFACE) flatLanding.add(o);
             if (!flatLanding.isEmpty()) options = flatLanding;
         }
-        return clean(options.get(rnd.nextInt(options.size())));
-    }
-
-    private static String clean(String col) {
-        return col.replace('M', '-').replace('F', '-');
+        return MarkovModel.cleanColumn(options.get(rnd.nextInt(options.size())));
     }
 
     static int surface(String col) {
@@ -139,49 +152,10 @@ public class LevelGenerator implements MarioLevelGenerator {
         return y;
     }
 
-    private void buildBackoffTables() {
-        int colLen = LEVEL_HEIGHT;
-        for (Map.Entry<String, List<String>> e : nGrams.entrySet()) {
-            String k = e.getKey();
-            if (k.length() < colLen) continue;
-            String lastCol = k.substring(k.length() - colLen);
-            bigrams.computeIfAbsent(lastCol, z -> new ArrayList<>()).addAll(e.getValue());
-            for (String follower : e.getValue()) {
-                bySurface.computeIfAbsent(surface(follower), z -> new ArrayList<>()).add(follower);
-            }
+    public void buildTable() {
+        for (String follower : markovModel.getAllObservedColumns()) {
+            String cleaned = MarkovModel.cleanColumn(follower);
+            bySurface.computeIfAbsent(surface(cleaned), z -> new ArrayList<>()).add(cleaned);
         }
-    }
-
-    public static Map<String, List<String>> buildTable(String dir, int n) {
-        Map<String, List<String>> table = new HashMap<>();
-        File[] files = new File(dir).listFiles((d, name) -> name.endsWith(".txt"));
-        if (files == null) throw new IllegalArgumentException("No levels found in " + dir);
-        for (File f : files) {
-            List<String> cols = readColumns(f);
-            for (int i = 0; i + n < cols.size(); i++) {
-                StringBuilder key = new StringBuilder();
-                for (int j = i; j < i + n; j++) key.append(cols.get(j));
-                table.computeIfAbsent(key.toString(), z -> new ArrayList<>()).add(cols.get(i + n));
-            }
-        }
-        return table;
-    }
-
-    private static List<String> readColumns(File f) {
-        List<String> cols = new ArrayList<>();
-        try {
-            List<String> rows = Files.readAllLines(f.toPath());
-            rows.removeIf(String::isEmpty);
-            if (rows.size() != LEVEL_HEIGHT) return cols;
-            int w = rows.get(0).length();
-            for (int x = 0; x < w; x++) {
-                StringBuilder c = new StringBuilder();
-                for (String row : rows) c.append(x < row.length() ? row.charAt(x) : '-');
-                cols.add(clean(c.toString()));
-            }
-        } catch (IOException e) {
-            System.err.println("Could not read " + f + ": " + e.getMessage());
-        }
-        return cols;
     }
 }
