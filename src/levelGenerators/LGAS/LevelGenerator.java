@@ -1,7 +1,5 @@
 package levelGenerators.LGAS;
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -12,7 +10,6 @@ import java.util.function.UnaryOperator;
 import engine.core.MarioLevelGenerator;
 import engine.core.MarioLevelModel;
 import engine.core.MarioTimer;
-import levelGenerators.LGAS.MarkovModel;
 
 public class LevelGenerator implements MarioLevelGenerator {
     public static final int LEVEL_HEIGHT = 16;
